@@ -1,29 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { LandingPage } from '@/components/LandingPage';
-import { AuthPage } from '@/components/AuthPage';
-import { DashboardShell } from '@/components/DashboardShell';
 
 export default function HomePage() {
-  const [view, setView] = useState<'landing' | 'auth' | 'dashboard'>('dashboard');
+  const router = useRouter();
 
   return (
     <div className="min-h-screen bg-[#090d16]">
-      {view === 'landing' && (
-        <LandingPage onEnterApp={() => setView('auth')} />
-      )}
-
-      {view === 'auth' && (
-        <AuthPage 
-          onSuccess={() => setView('dashboard')} 
-          onBackToLanding={() => setView('landing')} 
-        />
-      )}
-
-      {view === 'dashboard' && (
-        <DashboardShell onLogout={() => setView('landing')} />
-      )}
+      <LandingPage onEnterApp={() => router.push('/auth')} />
     </div>
   );
 }

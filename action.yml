@@ -1,0 +1,63 @@
+name: 'Axiom Secrets Sync'
+description: >
+  Sync a .env file to your Axiom secrets vault or validate secrets drift
+  between your .env file and the vault — directly in CI/CD pipelines.
+author: 'codingvibes8'
+
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  axiom_api_url:
+    description: 'Base URL of your Axiom deployment (e.g. https://your-axiom.vercel.app)'
+    required: true
+  axiom_project_id:
+    description: 'Axiom project ID to sync secrets into'
+    required: true
+  axiom_token:
+    description: 'Axiom agent harness API token (store this as a GitHub secret)'
+    required: true
+  env_file:
+    description: 'Path to the .env file to sync or validate'
+    required: false
+    default: '.env'
+  environment:
+    description: 'Target environment: development | staging | production'
+    required: false
+    default: 'production'
+  mode:
+    description: 'Action mode: "sync" (push secrets to vault) or "validate" (check for drift)'
+    required: false
+    default: 'validate'
+  fail_on_drift:
+    description: 'Exit with code 1 if drift is detected (only applies in validate mode)'
+    required: false
+    default: 'true'
+
+outputs:
+  secrets_synced:
+    description: 'Number of secrets successfully synced (sync mode only)'
+  drift_detected:
+    description: 'true if drift was found between the .env file and the vault (validate mode only)'
+  drift_count:
+    description: 'Number of secrets that differ between the .env file and the vault'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Check Node.js version
+      shell: bash
+      run: node --version
+
+    - name: Run Axiom Sync / Validate
+      shell: bash
+      env:
+        AXIOM_API_URL: ${{ inputs.axiom_api_url }}
+        AXIOM_PROJECT_ID: ${{ inputs.axiom_project_id }}
+        AXIOM_TOKEN: ${{ inputs.axiom_token }}
+        ENV_FILE: ${{ inputs.env_file }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        MODE: ${{ inputs.mode }}
+        FAIL_ON_DRIFT: ${{ inputs.fail_on_drift }}
+      run: node ${{ github.action_path }}/scripts/axiom-sync.js

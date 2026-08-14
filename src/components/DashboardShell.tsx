@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAxiomStore } from '@/lib/store';
+import { CommandPalette } from './CommandPalette';
 import { Environment } from '@/lib/types';
 import { SecretsTab } from './SecretsTab';
 import { DiffTab } from './DiffTab';
@@ -21,7 +22,8 @@ import {
   CheckCircle2, 
   Menu,
   X,
-  Sparkles
+  Sparkles,
+  Search
 } from 'lucide-react';
 
 interface DashboardShellProps {
@@ -42,6 +44,30 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
   } = useAxiomStore();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Global Cmd+K / Ctrl+K keyboard shortcut
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
+
+  // Auto-close drawer on large screens
+  React.useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768 && isMobileMenuOpen) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isMobileMenuOpen]);
 
   const envs: { id: Environment; label: string; color: string }[] = [
     { id: 'development', label: 'Dev', color: 'text-teal-400 border-teal-500/30 bg-teal-500/10' },
@@ -74,15 +100,25 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           className="p-2 text-zinc-400 hover:text-white"
+          aria-label="Toggle Navigation"
+          aria-expanded={isMobileMenuOpen}
         >
           {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
       </div>
 
+      {/* Mobile Drawer Backdrop */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar Navigation */}
       <aside
-        className={`fixed md:sticky top-0 left-0 h-screen w-64 glass-panel border-r border-zinc-800/80 z-40 flex flex-col justify-between p-5 transition-transform duration-300 md:translate-x-0 ${
-          isMobileMenuOpen ? 'translate-x-0 bg-zinc-900' : '-translate-x-full md:translate-x-0'
+        className={`fixed top-0 left-0 h-full w-72 md:w-64 glass-panel border-r border-zinc-800/80 z-40 flex flex-col justify-between p-5 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
+          isMobileMenuOpen ? 'translate-x-0 bg-zinc-900 shadow-2xl' : '-translate-x-full'
         }`}
       >
         <div className="space-y-6">
@@ -180,7 +216,7 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
       </aside>
 
       {/* Main Content Dashboard Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-zinc-950">
+      <main className="flex-1 flex flex-col min-w-0 bg-zinc-950 md:pl-0">
         {/* Top Header */}
         <header className="sticky top-0 z-30 glass-panel border-b border-zinc-800 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -191,6 +227,24 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
               </span>
             </h1>
           </div>
+
+          {/* Cmd+K search trigger */}
+          <button
+            data-testid="cmd-k-trigger"
+            onClick={() => setIsSearchOpen(true)}
+            className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl
+                       bg-zinc-900/80 border border-zinc-700/60 text-zinc-400
+                       hover:border-zinc-600 hover:text-zinc-200 transition-all
+                       text-xs group"
+            aria-label="Open search (Ctrl+K)"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="text-zinc-500 group-hover:text-zinc-300">Search secrets…</span>
+            <kbd className="ml-1 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px]
+                            font-mono text-zinc-600 bg-zinc-800 border border-zinc-700">
+              ⌘K
+            </kbd>
+          </button>
 
           {/* Environment Switcher */}
           <div className="flex items-center gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
@@ -223,6 +277,13 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
           {activeTab === 'settings' && <SettingsTab />}
         </div>
       </main>
+
+      {/* Cmd+K Command Palette */}
+      <CommandPalette
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onNavigate={(tab) => setActiveTab(tab as 'secrets' | 'diff' | 'team' | 'activity' | 'agents' | 'settings')}
+      />
 
       {/* Floating Global Toast Notification */}
       {toastMessage && (

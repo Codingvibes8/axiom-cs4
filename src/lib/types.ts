@@ -91,6 +91,7 @@ export interface AgentHarness {
   api_key_alias: string;
   token_prefix: string;
   created_at: string;
+  expires_at?: string;
   last_invoked?: string;
   auto_mask_secrets: boolean;
 }
