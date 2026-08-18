@@ -8,6 +8,7 @@ export interface User {
   name: string;
   avatar_url?: string;
   role: UserRole;
+  twoFactorEnabled?: boolean;
 }
 
 export interface SecretVersion {
@@ -67,7 +68,7 @@ export interface ActivityLog {
   project_id: string;
   user_name: string;
   user_email: string;
-  action: 'SECRET_CREATED' | 'SECRET_READ' | 'SECRET_UPDATED' | 'SECRET_DELETED' | 'SECRET_ROLLBACK' | 'ENV_SYNC' | 'AGENT_TOKEN_ISSUED' | 'AGENT_ACCESS_GRANTED' | 'AGENT_KILLSWITCH_TRIGGERED' | 'KEY_ROTATION';
+  action: 'SECRET_CREATED' | 'SECRET_READ' | 'SECRET_UPDATED' | 'SECRET_DELETED' | 'SECRET_ROLLBACK' | 'ENV_SYNC' | 'AGENT_TOKEN_ISSUED' | 'AGENT_ACCESS_GRANTED' | 'AGENT_KILLSWITCH_TRIGGERED' | 'KEY_ROTATION' | 'MFA_ENABLED' | 'MFA_DISABLED';
   resource_name: string;
   environment: Environment;
   details?: string;

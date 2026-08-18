@@ -2,19 +2,25 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAxiomStore } from '@/lib/store';
-import { UserRole } from '@/lib/types';
-import { 
-  supabaseBrowser, 
-  signInWithGoogle, 
-  mapSupabaseUserToAppUser 
+import { UserRole, User as AxiomUser } from '@/lib/types';
+import {
+  supabaseBrowser,
+  signInWithGoogle,
+  signOut,
+  mapSupabaseUserToAppUser,
+  hasVerifiedTotpFactor,
+  getAAL,
 } from '@/lib/supabase';
-import { 
-  Shield, 
-  ArrowRight, 
-  Lock, 
-  Mail, 
-  Zap, 
-  ChevronLeft
+import { TwoFactorVerify } from './TwoFactorVerify';
+import {
+  Shield,
+  ArrowRight,
+  Lock,
+  Mail,
+  Zap,
+  ChevronLeft,
+  ShieldCheck,
+  KeyRound,
 } from 'lucide-react';
 
 interface AuthPageProps {
@@ -22,8 +28,15 @@ interface AuthPageProps {
   onBackToLanding: () => void;
 }
 
+type AuthView = 'main' | 'twofa' | 'demo2fa';
+
 export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }) => {
   const { setCurrentUser, showToast } = useAxiomStore();
+
+  const [view, setView] = useState<AuthView>('main');
+  const [pendingAppUser, setPendingAppUser] = useState<AxiomUser | null>(null);
+  const [demoCode, setDemoCode] = useState('');
+  const [demoCodeInput, setDemoCodeInput] = useState('');
 
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
@@ -31,10 +44,30 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
   const onSuccessRef = useRef(onSuccess);
   useEffect(() => {
     onSuccessRef.current = onSuccess;
   });
+
+  // Guards to prevent double-processing of session events
+  const loginCompletedRef = useRef(false);
+  const mfaPromptedRef = useRef(false);
+
+  const completeLogin = (appUser: AxiomUser) => {
+    loginCompletedRef.current = true;
+    setCurrentUser(appUser);
+    showToast(`Signed in as ${appUser.name}`);
+    onSuccessRef.current();
+  };
+
+  const startDemo2FA = (appUser: AxiomUser) => {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    setDemoCode(code);
+    setDemoCodeInput('');
+    setPendingAppUser(appUser);
+    setView('demo2fa');
+  };
 
   // Restore an existing Supabase session (e.g. after Google OAuth redirect)
   useEffect(() => {
@@ -42,32 +75,52 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }
     if (!browser) return;
 
     let active = true;
-    const signInExistingSession = (sessionUserId?: string) => {
+
+    const evaluateSession = (sessionUserId?: string) => {
+      if (loginCompletedRef.current) return;
+
       browser.auth.getUser().then(({ data }) => {
         if (!active || !data.user) return;
         const appUser = mapSupabaseUserToAppUser(data.user);
         if (!appUser) return;
         if (sessionUserId && sessionUserId !== data.user.id) return;
-        setCurrentUser(appUser);
-        showToast(`Signed in as ${appUser.name}`);
-        onSuccessRef.current();
+
+        const hasTotp = hasVerifiedTotpFactor(data.user);
+        if (!hasTotp) {
+          completeLogin(appUser);
+          return;
+        }
+
+        // User has a TOTP factor — only proceed if already at AAL2, else prompt 2FA
+        getAAL().then(({ data: aalData }) => {
+          if (!active || loginCompletedRef.current) return;
+          const level = aalData?.currentLevel;
+          if (level === 'aal2') {
+            completeLogin(appUser);
+          } else if (!mfaPromptedRef.current) {
+            mfaPromptedRef.current = true;
+            setPendingAppUser(appUser);
+            setView('twofa');
+          }
+        });
       });
     };
 
     browser.auth.getSession().then(({ data }) => {
       if (!active || !data.session) return;
-      signInExistingSession(data.session.user.id);
+      evaluateSession(data.session.user.id);
     });
 
     const { data: subscription } = browser.auth.onAuthStateChange((_event, session) => {
       if (!active || !session) return;
-      signInExistingSession(session.user.id);
+      evaluateSession(session.user.id);
     });
 
     return () => {
       active = false;
       subscription.subscription.unsubscribe();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setCurrentUser, showToast]);
 
   // Surface OAuth errors (e.g. provider not enabled) passed via ?error=
@@ -98,35 +151,195 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }
     }
   };
 
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
-
     setLoading(true);
-    setTimeout(() => {
-      setCurrentUser({
-        id: `usr_${Date.now()}`,
-        email: email.trim(),
-        name: name.trim() || email.split('@')[0],
-        role: 'owner',
-      });
+
+    if (supabaseBrowser) {
+      try {
+        if (mode === 'signin') {
+          const { data, error } = await supabaseBrowser.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          });
+          if (error) {
+            showToast(error.message);
+            setLoading(false);
+            return;
+          }
+          const appUser = mapSupabaseUserToAppUser(data.user);
+          if (!appUser) {
+            showToast('Sign-in failed.');
+            setLoading(false);
+            return;
+          }
+          if (hasVerifiedTotpFactor(data.user)) {
+            mfaPromptedRef.current = true;
+            setPendingAppUser(appUser);
+            setView('twofa');
+          } else {
+            completeLogin(appUser);
+          }
+        } else {
+          const { data, error } = await supabaseBrowser.auth.signUp({
+            email: email.trim(),
+            password,
+            options: { data: { full_name: name.trim() } },
+          });
+          if (error) {
+            showToast(error.message);
+            setLoading(false);
+            return;
+          }
+          if (data.session && data.user) {
+            const appUser = mapSupabaseUserToAppUser(data.user);
+            if (appUser) completeLogin(appUser);
+          } else {
+            showToast('Account created. Check your email to confirm, then sign in.');
+            setMode('signin');
+          }
+        }
+      } catch (err) {
+        console.error('Auth error:', err);
+        showToast('Authentication failed. Check your Supabase configuration.');
+      }
       setLoading(false);
-      showToast(`Welcome back, ${name || email}!`);
-      onSuccess();
-    }, 600);
+      return;
+    }
+
+    // Supabase not configured — demo flow with simulated 2FA
+    const mockUser: AxiomUser = {
+      id: `usr_${Date.now()}`,
+      email: email.trim(),
+      name: name.trim() || email.split('@')[0],
+      role: 'owner',
+    };
+    setLoading(false);
+    startDemo2FA(mockUser);
   };
 
   const handleQuickDemoLogin = (role: UserRole, demoName: string, demoEmail: string) => {
-    setCurrentUser({
+    const demoUser: AxiomUser = {
       id: `usr_demo_${role}`,
       name: demoName,
       email: demoEmail,
       role,
-    });
-    showToast(`Logged in as ${demoName} (${role.toUpperCase()})`);
-    onSuccess();
+    };
+    startDemo2FA(demoUser);
   };
 
+  const handleTwoFactorBack = () => {
+    signOut();
+    setPendingAppUser(null);
+    mfaPromptedRef.current = false;
+    setView('main');
+  };
+
+  const handleDemoVerify = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingAppUser) return;
+    if (demoCodeInput === demoCode) {
+      completeLogin({ ...pendingAppUser, twoFactorEnabled: true });
+    } else {
+      showToast('Invalid demo code. Please try again.');
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Real 2FA verification view (Supabase TOTP)
+  // ---------------------------------------------------------------------------
+  if (view === 'twofa' && pendingAppUser) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 bg-grid-pattern relative">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-600/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="w-full max-w-md relative z-10">
+          <div className="glass-panel-elevated p-8 rounded-3xl border border-zinc-800 bg-zinc-900/90">
+            <TwoFactorVerify
+              onSuccess={() => completeLogin({ ...pendingAppUser, twoFactorEnabled: true })}
+              onBack={handleTwoFactorBack}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simulated 2FA view (demo / unconfigured Supabase)
+  // ---------------------------------------------------------------------------
+  if (view === 'demo2fa' && pendingAppUser) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 bg-grid-pattern relative">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-emerald-600/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="w-full max-w-md relative z-10">
+          <div className="glass-panel-elevated p-8 rounded-3xl border border-zinc-800 bg-zinc-900/90 space-y-6">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center mx-auto shadow-lg shadow-emerald-500/30">
+                <ShieldCheck className="w-6 h-6 text-zinc-950 font-black" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-white tracking-tight">
+                Two-Factor Verification
+              </h2>
+              <p className="text-xs text-zinc-400">
+                Demo mode — enter the one-time code shown below
+              </p>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
+                Your demo one-time code
+              </p>
+              <p className="text-3xl font-mono font-black tracking-[0.4em] text-white">
+                {demoCode}
+              </p>
+            </div>
+
+            <form onSubmit={handleDemoVerify} className="space-y-4">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-zinc-300 justify-center">
+                <KeyRound className="w-4 h-4 text-emerald-400" />
+                <span>Enter code</span>
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="000000"
+                value={demoCodeInput}
+                onChange={(e) => setDemoCodeInput(e.target.value.replace(/\D/g, ''))}
+                className="w-full px-4 py-3 text-center text-2xl font-mono tracking-[0.5em] bg-zinc-950 border border-zinc-800 rounded-xl text-white focus:border-emerald-500 focus:outline-none placeholder:text-zinc-700"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={demoCodeInput.length !== 6}
+                className="w-full py-2.5 px-4 text-xs font-bold uppercase tracking-wider bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 font-black rounded-xl shadow-lg shadow-emerald-500/25 transition-all flex items-center justify-center gap-2"
+              >
+                <span>Verify & Continue</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingAppUser(null);
+                  setView('main');
+                }}
+                className="w-full py-2 px-4 text-xs font-semibold text-zinc-400 hover:text-white transition-colors flex items-center justify-center gap-1.5"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                Back to sign in
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Main sign-in / sign-up view
+  // ---------------------------------------------------------------------------
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 bg-grid-pattern relative">
       {/* Background Glow */}
@@ -188,7 +401,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }
                 <Zap className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
                 Instant 1-Click Demo Access
               </span>
-              <span className="text-[10px] text-zinc-500">No pass needed</span>
+              <span className="text-[10px] text-zinc-500">2FA simulated</span>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
@@ -293,7 +506,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess, onBackToLanding }
           <div className="text-center text-xs text-zinc-400">
             {mode === 'signin' ? (
               <span>
-                Don&apos;t have an organization?{' '}
+                Don't have an organization?{' '}
                 <button
                   onClick={() => setMode('signup')}
                   className="text-emerald-400 font-semibold hover:underline"

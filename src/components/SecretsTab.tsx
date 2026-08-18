@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAxiomStore } from '@/lib/store';
 import { Secret, Environment } from '@/lib/types';
+import { getAAL, isSupabaseConfigured } from '@/lib/supabase';
+import { TwoFactorChallengeModal } from './TwoFactorChallengeModal';
 import { 
   Key, 
   Plus, 
@@ -30,6 +32,9 @@ export const SecretsTab: React.FC = () => {
     secrets, 
     currentEnv, 
     currentProject, 
+    currentUser,
+    settings,
+    setActiveTab,
     addSecret, 
     updateSecret, 
     deleteSecret, 
@@ -42,6 +47,25 @@ export const SecretsTab: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // MFA step-up state for production secrets
+  const [mfaVerified, setMfaVerified] = useState(false);
+  const [mfaPending, setMfaPending] = useState<
+    | { kind: 'reveal'; id: string }
+    | { kind: 'copy'; id: string; value: string; keyName: string }
+    | null
+  >(null);
+
+  // If the user already passed 2FA at sign-in, they're at AAL2 — no re-prompt needed.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    getAAL().then(({ data }) => {
+      if (data?.currentLevel === 'aal2') setMfaVerified(true);
+    }).catch(() => {});
+  }, []);
+
+  const mfaRequired = (): boolean =>
+    currentEnv === 'production' && settings.require_mfa_for_production;
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -76,15 +100,56 @@ export const SecretsTab: React.FC = () => {
 
   const categories = ['All', 'AI / LLM', 'Database', 'Cloud / Infra', 'OAuth', 'General'];
 
+  const requestMfaStepUp = (pending: { kind: 'reveal'; id: string } | { kind: 'copy'; id: string; value: string; keyName: string }) => {
+    if (!currentUser.twoFactorEnabled) {
+      showToast('Production secrets are MFA-protected. Enable two-factor authentication first.');
+      setActiveTab('settings');
+      return;
+    }
+    setMfaPending(pending);
+  };
+
+  const handleMfaVerified = () => {
+    setMfaVerified(true);
+    const pending = mfaPending;
+    setMfaPending(null);
+    if (!pending) return;
+
+    if (pending.kind === 'reveal') {
+      setRevealedIds((prev) => ({ ...prev, [pending.id]: true }));
+    } else {
+      navigator.clipboard.writeText(pending.value);
+      setCopiedId(pending.id);
+      showToast(`Copied ${pending.keyName} to clipboard`);
+      setTimeout(() => setCopiedId(null), 2000);
+    }
+  };
+
   const toggleReveal = (id: string) => {
-    setRevealedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+    // Hiding a secret never requires MFA
+    if (revealedIds[id]) {
+      setRevealedIds((prev) => ({ ...prev, [id]: false }));
+      return;
+    }
+
+    if (!mfaRequired() || mfaVerified) {
+      setRevealedIds((prev) => ({ ...prev, [id]: true }));
+      return;
+    }
+
+    requestMfaStepUp({ kind: 'reveal', id });
   };
 
   const handleCopy = (id: string, value: string, keyName: string) => {
-    navigator.clipboard.writeText(value);
-    setCopiedId(id);
-    showToast(`Copied ${keyName} to clipboard`);
-    setTimeout(() => setCopiedId(null), 2000);
+    if (!mfaRequired() || mfaVerified) {
+      navigator.clipboard.writeText(value);
+      setCopiedId(id);
+      showToast(`Copied ${keyName} to clipboard`);
+      setTimeout(() => setCopiedId(null), 2000);
+      return;
+    }
+
+    requestMfaStepUp({ kind: 'copy', id, value, keyName });
   };
 
   const handleAddSubmit = (e: React.FormEvent) => {
@@ -742,6 +807,14 @@ export const SecretsTab: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MFA STEP-UP MODAL for production secrets */}
+      {mfaPending && (
+        <TwoFactorChallengeModal
+          onClose={() => setMfaPending(null)}
+          onVerified={handleMfaVerified}
+        />
       )}
     </div>
   );

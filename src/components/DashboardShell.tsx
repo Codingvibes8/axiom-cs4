@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useAxiomStore } from '@/lib/store';
 import { CommandPalette } from './CommandPalette';
 import { Environment } from '@/lib/types';
+import { isSupabaseConfigured, listFactors } from '@/lib/supabase';
 import { SecretsTab } from './SecretsTab';
 import { DiffTab } from './DiffTab';
 import { AgentHarnessTab } from './AgentHarnessTab';
@@ -23,7 +24,8 @@ import {
   Menu,
   X,
   Sparkles,
-  Search
+  Search,
+  ShieldCheck
 } from 'lucide-react';
 
 interface DashboardShellProps {
@@ -33,6 +35,7 @@ interface DashboardShellProps {
 export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
   const { 
     currentUser, 
+    setCurrentUser, 
     currentProject, 
     currentEnv, 
     setCurrentEnv, 
@@ -45,6 +48,22 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // Sync the 2FA status into the user record on load (survives refresh in the session)
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    listFactors()
+      .then(({ data }) => {
+        const hasTotp = data?.all.some(
+          (f) => f.factor_type === 'totp' && f.status === 'verified'
+        );
+        if (Boolean(hasTotp) !== Boolean(currentUser.twoFactorEnabled)) {
+          setCurrentUser({ ...currentUser, twoFactorEnabled: Boolean(hasTotp) });
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Global Cmd+K / Ctrl+K keyboard shortcut
   useEffect(() => {
@@ -200,7 +219,18 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-white truncate">{currentUser.name}</div>
-                <div className="text-[10px] text-zinc-400 capitalize">{currentUser.role}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-zinc-400 capitalize">{currentUser.role}</span>
+                  {currentUser.twoFactorEnabled && (
+                    <span
+                      className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                      title="Two-factor authentication enabled"
+                    >
+                      <ShieldCheck className="w-2.5 h-2.5" />
+                      2FA
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

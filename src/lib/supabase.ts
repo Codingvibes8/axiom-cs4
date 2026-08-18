@@ -53,5 +53,58 @@ export function mapSupabaseUserToAppUser(user: SupabaseUser | null): AxiomUser |
     name: fullName || (user.email ?? 'Axiom User').split('@')[0],
     avatar_url: avatar ?? undefined,
     role: 'owner',
+    twoFactorEnabled: hasVerifiedTotpFactor(user),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Two-Factor Authentication (TOTP) helpers
+// ---------------------------------------------------------------------------
+
+/** Returns true if the user has at least one verified TOTP factor enrolled. */
+export function hasVerifiedTotpFactor(user: SupabaseUser | null): boolean {
+  if (!user) return false;
+  const factors = user.factors ?? [];
+  return factors.some(
+    (f) => f.factor_type === 'totp' && f.status === 'verified'
+  );
+}
+
+/** Enroll a new TOTP factor. Returns the factor id, QR code SVG and secret. */
+export async function enrollTotpFactor(friendlyName?: string) {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.enroll({
+    factorType: 'totp',
+    friendlyName: friendlyName || 'Axiom Vault',
+  });
+}
+
+/** Create a challenge for the given factor id. */
+export async function challengeTotpFactor(factorId: string) {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.challenge({ factorId });
+}
+
+/** Verify a challenge with the 6-digit TOTP code. */
+export async function verifyTotpChallenge(factorId: string, challengeId: string, code: string) {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.verify({ factorId, challengeId, code });
+}
+
+/** Unenroll (remove) a TOTP factor. */
+export async function unenrollTotpFactor(factorId: string) {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.unenroll({ factorId });
+}
+
+/** List all enrolled factors for the current user. */
+export async function listFactors() {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.listFactors();
+}
+
+/** Get the current Authenticator Assurance Level. */
+export async function getAAL() {
+  if (!supabaseBrowser) return { data: null, error: new Error('Supabase is not configured') };
+  return supabaseBrowser.auth.mfa.getAuthenticatorAssuranceLevel();
 }
