@@ -169,15 +169,16 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  // Persist only the active environment. Secret values are never written to
-  // browser storage.
+  // Persist only the active environment, and only for an authenticated
+  // session. This keeps sign-out from leaving axiom_* keys behind.
   useEffect(() => {
+    if (!currentUser.id) return;
     try {
       localStorage.setItem(STORAGE_KEYS.ENV, currentEnv);
     } catch (e) {
       console.warn('Failed to save Axiom preferences:', e);
     }
-  }, [currentEnv]);
+  }, [currentEnv, currentUser.id]);
 
   // Periodic TTL Checker
   useEffect(() => {

@@ -237,7 +237,7 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
             <button
               onClick={onLogout}
               className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-              title="Sign Out to Landing"
+              title="Sign out"
             >
               <LogOut className="w-4 h-4" />
             </button>

@@ -5,7 +5,7 @@ import { isSupabaseConfigured, safeRedirectPath } from '@/lib/supabase/config';
 import { getSessionUser } from '@/lib/supabase/server';
 
 export const metadata: Metadata = {
-  title: 'Sign in | Axiom',
+  title: 'Sign in',
 };
 
 export const dynamic = 'force-dynamic';
