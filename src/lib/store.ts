@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { 
   Environment, 
   Secret, 
@@ -20,11 +20,14 @@ import {
   INITIAL_AGENTS, 
   INITIAL_SETTINGS 
 } from './seed';
+import { isDemoMode } from './supabase/config';
+import { randomId, secureToken } from './crypto';
 
 interface AxiomStoreContextType {
   // Auth & Project State
   currentUser: User;
   setCurrentUser: (user: User) => void;
+  clearSession: () => void;
   currentProject: Project;
   setCurrentProject: (proj: Project) => void;
   currentEnv: Environment;
@@ -70,23 +73,65 @@ interface AxiomStoreContextType {
 
 const AxiomStoreContext = createContext<AxiomStoreContextType | null>(null);
 
+// Only non-sensitive UI preferences are persisted. Secrets, version history,
+// team data, agent tokens, audit logs and webhook settings stay in memory.
 const STORAGE_KEYS = {
-  PROJECT: 'axiom_project_v1',
-  SECRETS: 'axiom_secrets_v1',
-  TEAM: 'axiom_team_v1',
-  ACTIVITY: 'axiom_activity_v1',
-  AGENTS: 'axiom_agents_v1',
-  SETTINGS: 'axiom_settings_v1',
   ENV: 'axiom_active_env_v1',
 };
 
+// Keys written by earlier builds. Removed on mount and on sign-out.
+const LEGACY_SENSITIVE_KEYS = [
+  'axiom_project_v1',
+  'axiom_secrets_v1',
+  'axiom_team_v1',
+  'axiom_activity_v1',
+  'axiom_agents_v1',
+  'axiom_settings_v1',
+];
+
+const DEMO_USER_KEY = 'axiom_demo_user_v1';
+
+const GUEST_USER: User = {
+  id: '',
+  name: 'Guest',
+  email: '',
+  role: 'viewer',
+};
+
+const isUser = (value: unknown): value is User => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<User>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.email === 'string' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.role === 'string'
+  );
+};
+
+const removePersistedState = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ENV);
+    LEGACY_SENSITIVE_KEYS.forEach((key) => localStorage.removeItem(key));
+    sessionStorage.removeItem(DEMO_USER_KEY);
+  } catch {
+    // Storage may be unavailable (private mode / SSR).
+  }
+};
+
 export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>({
-    id: 'usr_01',
-    name: 'Alex Mercer',
-    email: 'alex@axiom.dev',
-    role: 'owner',
-  });
+  const [currentUser, setCurrentUserState] = useState<User>(GUEST_USER);
+
+  const setCurrentUser = useCallback((user: User) => {
+    setCurrentUserState(user);
+    if (typeof window !== 'undefined' && isDemoMode) {
+      try {
+        sessionStorage.setItem(DEMO_USER_KEY, JSON.stringify(user));
+      } catch {
+        // Ignore storage failures; the in-memory session still works.
+      }
+    }
+  }, []);
 
   const [currentProject, setCurrentProject] = useState<Project>(INITIAL_PROJECT);
   const [currentEnv, setCurrentEnv] = useState<Environment>('production');
@@ -100,44 +145,38 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Initialize from LocalStorage if available
+  // Initialize non-sensitive preferences from LocalStorage. Sensitive data
+  // from legacy builds is actively purged.
   useEffect(() => {
     try {
-      const savedSecrets = localStorage.getItem(STORAGE_KEYS.SECRETS);
-      if (savedSecrets) setSecrets(JSON.parse(savedSecrets));
-      
-      const savedTeam = localStorage.getItem(STORAGE_KEYS.TEAM);
-      if (savedTeam) setTeam(JSON.parse(savedTeam));
-
-      const savedActivity = localStorage.getItem(STORAGE_KEYS.ACTIVITY);
-      if (savedActivity) setActivities(JSON.parse(savedActivity));
-
-      const savedAgents = localStorage.getItem(STORAGE_KEYS.AGENTS);
-      if (savedAgents) setAgents(JSON.parse(savedAgents));
-
-      const savedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-      if (savedSettings) setSettings(JSON.parse(savedSettings));
+      LEGACY_SENSITIVE_KEYS.forEach((key) => localStorage.removeItem(key));
 
       const savedEnv = localStorage.getItem(STORAGE_KEYS.ENV) as Environment | null;
+      // Hydrating a client-only preference after mount is intentional.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (savedEnv) setCurrentEnv(savedEnv);
+
+      if (isDemoMode) {
+        const savedUser = sessionStorage.getItem(DEMO_USER_KEY);
+        if (savedUser) {
+          const parsed: unknown = JSON.parse(savedUser);
+          if (isUser(parsed)) setCurrentUserState(parsed);
+        }
+      }
     } catch (e) {
-      console.warn('Failed to load Axiom state from localStorage:', e);
+      console.warn('Failed to load Axiom preferences:', e);
     }
   }, []);
 
-  // Save changes to LocalStorage
+  // Persist only the active environment. Secret values are never written to
+  // browser storage.
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEYS.SECRETS, JSON.stringify(secrets));
-      localStorage.setItem(STORAGE_KEYS.TEAM, JSON.stringify(team));
-      localStorage.setItem(STORAGE_KEYS.ACTIVITY, JSON.stringify(activities));
-      localStorage.setItem(STORAGE_KEYS.AGENTS, JSON.stringify(agents));
-      localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
       localStorage.setItem(STORAGE_KEYS.ENV, currentEnv);
     } catch (e) {
-      console.warn('Failed to save Axiom state to localStorage:', e);
+      console.warn('Failed to save Axiom preferences:', e);
     }
-  }, [secrets, team, activities, agents, settings, currentEnv]);
+  }, [currentEnv]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -148,7 +187,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const logAction = (action: ActivityLog['action'], resource: string, env: Environment, details?: string) => {
     const newLog: ActivityLog = {
-      id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      id: randomId('act'),
       project_id: currentProject.id,
       user_name: currentUser.name,
       user_email: currentUser.email,
@@ -165,17 +204,18 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const addSecret = (newSecData: Omit<Secret, 'id' | 'created_at' | 'updated_at' | 'version' | 'updated_by'>) => {
     const now = new Date().toISOString();
+    const newSecretId = randomId('sec');
     const newSecret: Secret = {
       ...newSecData,
-      id: `sec_${Date.now()}`,
+      id: newSecretId,
       version: 1,
       created_at: now,
       updated_at: now,
       updated_by: currentUser.email,
       versions: [
         {
-          id: `v_${Date.now()}_1`,
-          secret_id: `sec_${Date.now()}`,
+          id: randomId('v'),
+          secret_id: newSecretId,
           version: 1,
           value: newSecData.value,
           created_at: now,
@@ -197,7 +237,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (sec.id !== id) return sec;
         const newVersionNum = (sec.version || 1) + 1;
         const newVersionObj: SecretVersion = {
-          id: `v_${Date.now()}_${newVersionNum}`,
+          id: randomId('v'),
           secret_id: sec.id,
           version: newVersionNum,
           value: newValue,
@@ -241,7 +281,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const now = new Date().toISOString();
     const newVersionNum = target.version + 1;
     const rollbackVersionObj: SecretVersion = {
-      id: `v_${Date.now()}_${newVersionNum}`,
+      id: randomId('v'),
       secret_id: target.id,
       version: newVersionNum,
       value: historical.value,
@@ -290,8 +330,9 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (rawKey) {
+        const entryId = randomId('sec');
         newEntries.push({
-          id: `sec_bulk_${Date.now()}_${count}`,
+          id: entryId,
           project_id: currentProject.id,
           key: rawKey,
           value: rawVal,
@@ -305,8 +346,8 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           updated_by: currentUser.email,
           versions: [
             {
-              id: `v_bulk_${Date.now()}_${count}`,
-              secret_id: `sec_bulk_${Date.now()}_${count}`,
+              id: randomId('v'),
+              secret_id: entryId,
               version: 1,
               value: rawVal,
               created_at: now,
@@ -336,9 +377,10 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (existingTarget) {
       updateSecret(existingTarget.id, sourceSecret.value, `Synced from ${sourceSecret.environment}`);
     } else {
+      const clonedId = randomId('sec');
       const cloned: Secret = {
         ...sourceSecret,
-        id: `sec_sync_${Date.now()}`,
+        id: clonedId,
         environment: targetEnv,
         version: 1,
         created_at: now,
@@ -347,8 +389,8 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         tags: [...sourceSecret.tags.filter((t) => t !== sourceSecret.environment), targetEnv],
         versions: [
           {
-            id: `v_sync_${Date.now()}`,
-            secret_id: `sec_sync_${Date.now()}`,
+            id: randomId('v'),
+            secret_id: clonedId,
             version: 1,
             value: sourceSecret.value,
             created_at: now,
@@ -366,7 +408,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addTeamMember = (memberData: Omit<TeamMember, 'id' | 'created_at'>) => {
     const newMember: TeamMember = {
       ...memberData,
-      id: `tm_${Date.now()}`,
+      id: randomId('tm'),
       created_at: new Date().toISOString(),
       last_active: 'Just invited',
     };
@@ -392,7 +434,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addAgent = (agentData: Omit<AgentHarness, 'id' | 'created_at' | 'tokens_used_today'>) => {
     const newAgent: AgentHarness = {
       ...agentData,
-      id: `agent_${Date.now()}`,
+      id: randomId('agent'),
       created_at: new Date().toISOString(),
       tokens_used_today: 0,
       last_invoked: 'Never',
@@ -423,7 +465,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const rotateAgentToken = (id: string) => {
     const target = agents.find((a) => a.id === id);
     if (target) {
-      const newAlias = `axm_agent_${Math.random().toString(36).substr(2, 8)}`;
+      const newAlias = secureToken('axm_agent_', 4);
       setAgents((prev) =>
         prev.map((a) => (a.id === id ? { ...a, api_key_alias: newAlias, status: 'active' } : a))
       );
@@ -437,14 +479,28 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast('Project security settings updated');
   };
 
+  const clearSession = useCallback(() => {
+    removePersistedState();
+    setCurrentUserState(GUEST_USER);
+    setSecrets(isDemoMode ? INITIAL_SECRETS : []);
+    setTeam(isDemoMode ? INITIAL_TEAM : []);
+    setActivities(isDemoMode ? INITIAL_ACTIVITY : []);
+    setAgents(isDemoMode ? INITIAL_AGENTS : []);
+    setSettings(INITIAL_SETTINGS);
+    setCurrentEnv('development');
+    setActiveTab('secrets');
+    setToastMessage(null);
+  }, []);
+
   const resetToDefaults = () => {
+    removePersistedState();
     setSecrets(INITIAL_SECRETS);
     setTeam(INITIAL_TEAM);
     setActivities(INITIAL_ACTIVITY);
     setAgents(INITIAL_AGENTS);
     setSettings(INITIAL_SETTINGS);
     setCurrentEnv('production');
-    localStorage.clear();
+    setCurrentUserState(GUEST_USER);
     showToast('Reset all demo data to default baseline');
   };
 
@@ -454,6 +510,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       value: {
         currentUser,
         setCurrentUser,
+        clearSession,
         currentProject,
         setCurrentProject,
         currentEnv,

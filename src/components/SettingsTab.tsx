@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { useAxiomStore } from '@/lib/store';
-import { isSupabaseConfigured } from '@/lib/supabase';
+import { isSupabaseConfigured } from '@/lib/supabase/config';
+import { randomFingerprint } from '@/lib/crypto';
 import { 
   Settings, 
   Key, 
@@ -48,11 +49,7 @@ export const SettingsTab: React.FC = () => {
   const handleRotateMasterKey = () => {
     setIsRotatingMasterKey(true);
     setTimeout(() => {
-      const newFingerprint = `SHA256:${Array.from({ length: 16 }, () =>
-        Math.floor(Math.random() * 256)
-          .toString(16)
-          .padStart(2, '0')
-      ).join(':')}`;
+      const newFingerprint = randomFingerprint();
 
       updateSettings({
         master_key_fingerprint: newFingerprint,

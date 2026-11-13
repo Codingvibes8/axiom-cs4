@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useAxiomStore } from '@/lib/store';
-import { Secret, Environment } from '@/lib/types';
+import { Secret } from '@/lib/types';
 import { 
   Key, 
   Plus, 
@@ -463,7 +463,7 @@ export const SecretsTab: React.FC = () => {
                   </label>
                   <select
                     value={newCategory}
-                    onChange={(e) => setNewCategory(e.target.value as any)}
+                    onChange={(e) => setNewCategory(e.target.value as Secret['category'])}
                     className="glass-input w-full px-3 py-2 rounded-lg text-sm bg-zinc-950 border-zinc-800"
                   >
                     <option value="AI / LLM">AI / LLM</option>
@@ -706,7 +706,7 @@ export const SecretsTab: React.FC = () => {
                         </div>
 
                         {ver.comment && (
-                          <p className="text-xs text-zinc-300 mb-2 italic">"{ver.comment}"</p>
+                          <p className="text-xs text-zinc-300 mb-2 italic">&quot;{ver.comment}&quot;</p>
                         )}
 
                         <div className="bg-black/60 p-2 rounded text-[11px] font-mono text-zinc-400 break-all mb-3 border border-zinc-800">

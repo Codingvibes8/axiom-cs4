@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { useAxiomStore } from '@/lib/store';
 import { AgentHarness, Environment } from '@/lib/types';
+import { secureToken } from '@/lib/crypto';
 import { 
   Bot, 
   Plus, 
@@ -14,8 +15,7 @@ import {
   Check, 
   Cpu, 
   Flame, 
-  X,
-  Sparkles
+  X
 } from 'lucide-react';
 
 export const AgentHarnessTab: React.FC = () => {
@@ -37,12 +37,12 @@ export const AgentHarnessTab: React.FC = () => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [modelProvider, setModelProvider] = useState<AgentHarness['model_provider']>('Anthropic');
-  const [agentType, setAgentType] = useState<AgentHarness['agent_type']>('Coding Assistant');
+  const [agentType] = useState<AgentHarness['agent_type']>('Coding Assistant');
   const [environment, setEnvironment] = useState<Environment>('development');
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>(['OPENAI_API_KEY']);
   const [ephemeralTtl, setEphemeralTtl] = useState(60);
   const [tokenLimitPerHour, setTokenLimitPerHour] = useState(50000);
-  const [autoMask, setAutoMask] = useState(true);
+  const [autoMask] = useState(true);
 
   // Interactive Live Simulator Terminal State
   const [selectedAgentId, setSelectedAgentId] = useState<string>(agents[0]?.id || '');
@@ -74,7 +74,7 @@ export const AgentHarnessTab: React.FC = () => {
       status: 'active',
       ephemeral_ttl_minutes: Number(ephemeralTtl),
       token_limit_per_hour: Number(tokenLimitPerHour),
-      api_key_alias: `axm_${modelProvider.toLowerCase().replace(/\s+/g, '')}_${Math.random().toString(36).substr(2, 6)}`,
+      api_key_alias: secureToken(`axm_${modelProvider.toLowerCase().replace(/\s+/g, '')}_`, 4),
       token_prefix: `axm_${environment.substring(0, 3)}_`,
       auto_mask_secrets: autoMask,
     });
@@ -334,7 +334,7 @@ export const AgentHarnessTab: React.FC = () => {
             </label>
             <div className="bg-zinc-950 rounded-xl p-3 border border-zinc-800 font-mono text-[11px] h-[126px] overflow-y-auto space-y-1 text-zinc-300">
               {simOutput.length === 0 ? (
-                <span className="text-zinc-600 italic">Click 'Dispatch Request' to stream proxy audit logs...</span>
+                <span className="text-zinc-600 italic">Click &apos;Dispatch Request&apos; to stream proxy audit logs...</span>
               ) : (
                 simOutput.map((line, i) => (
                   <div
@@ -415,7 +415,7 @@ export const AgentHarnessTab: React.FC = () => {
                   </label>
                   <select
                     value={modelProvider}
-                    onChange={(e) => setModelProvider(e.target.value as any)}
+                    onChange={(e) => setModelProvider(e.target.value as AgentHarness['model_provider'])}
                     className="glass-input w-full px-3 py-2 rounded-lg text-sm bg-zinc-950 border-zinc-800"
                   >
                     <option value="Anthropic">Anthropic (Claude)</option>

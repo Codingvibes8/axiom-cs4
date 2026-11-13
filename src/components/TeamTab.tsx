@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { useAxiomStore } from '@/lib/store';
-import { TeamMember, UserRole, Environment } from '@/lib/types';
+import { UserRole, Environment } from '@/lib/types';
+import { secureToken } from '@/lib/crypto';
 import { 
   Users, 
   UserPlus, 
@@ -47,7 +48,7 @@ export const TeamTab: React.FC = () => {
   };
 
   const generateServiceToken = () => {
-    const token = `axm_svc_live_${Math.random().toString(36).substr(2, 12)}_${Date.now().toString(36)}`;
+    const token = secureToken('axm_svc_live_', 24);
     setGeneratedServiceToken(token);
     showToast('Created CI/CD Service Account Token');
   };

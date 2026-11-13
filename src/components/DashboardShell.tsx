@@ -1,8 +1,12 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAxiomStore } from '@/lib/store';
 import { Environment } from '@/lib/types';
+import { mapSupabaseUser } from '@/lib/auth-user';
+import { createClient } from '@/lib/supabase/client';
+import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { SecretsTab } from './SecretsTab';
 import { DiffTab } from './DiffTab';
 import { AgentHarnessTab } from './AgentHarnessTab';
@@ -20,17 +24,19 @@ import {
   LogOut, 
   CheckCircle2, 
   Menu,
-  X,
-  Sparkles
+  X
 } from 'lucide-react';
 
 interface DashboardShellProps {
-  onLogout: () => void;
+  onLogout?: () => void;
 }
 
-export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
+export const DashboardShell: React.FC<DashboardShellProps> = () => {
+  const router = useRouter();
   const { 
     currentUser, 
+    setCurrentUser,
+    clearSession,
     currentProject, 
     currentEnv, 
     setCurrentEnv, 
@@ -42,6 +48,42 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
   } = useAxiomStore();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Hydrate the client store with the server-verified Supabase identity.
+  // Authorization still happens server-side and (later) in RLS.
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    const supabase = createClient();
+    if (!supabase) return;
+
+    let active = true;
+    supabase.auth
+      .getUser()
+      .then(({ data }) => {
+        if (active && data.user) setCurrentUser(mapSupabaseUser(data.user));
+      })
+      .catch(() => {
+        // The route guard will handle a missing/invalid session.
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [setCurrentUser]);
+
+  const handleLogout = async () => {
+    try {
+      const supabase = createClient();
+      if (supabase) await supabase.auth.signOut();
+    } catch (error) {
+      console.warn('Failed to revoke Supabase session:', error);
+    } finally {
+      clearSession();
+      router.replace('/login');
+      router.refresh();
+    }
+  };
 
   const envs: { id: Environment; label: string; color: string }[] = [
     { id: 'development', label: 'Dev', color: 'text-teal-400 border-teal-500/30 bg-teal-500/10' },
@@ -169,9 +211,9 @@ export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
             </div>
 
             <button
-              onClick={onLogout}
+              onClick={handleLogout}
               className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-              title="Sign Out to Landing"
+              title="Sign out"
             >
               <LogOut className="w-4 h-4" />
             </button>

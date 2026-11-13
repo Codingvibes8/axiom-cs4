@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import { 
   Shield, 
-  Key, 
   GitCompare, 
   Bot, 
   Terminal, 
@@ -154,7 +153,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
             {activeShowcaseTab === 'agents' && (
               <div className="space-y-4 font-mono text-xs">
                 <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-800 text-emerald-400 space-y-1">
-                  <div>$ axiom agent proxy --target="claude-code" --ttl=15m</div>
+                  <div>$ axiom agent proxy --target=&quot;claude-code&quot; --ttl=15m</div>
                   <div className="text-zinc-400">✓ Intercepted request from agent ID [usr_claude_991]</div>
                   <div className="text-teal-300">✓ Masked raw OPENAI_API_KEY: [sk-proj-••••••••••••bc10]</div>
                   <div className="text-emerald-300">✓ Hourly token budget active: 18,420 / 50,000 tokens</div>
@@ -256,7 +255,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onEnterApp }) => {
             </div>
             <h4 className="text-lg font-bold text-white">Environment Diff & Sync</h4>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Instantly identify missing keys between Development, Staging, and Production. Sync drifted secrets with 1-click and eliminate "works on my machine" deployment failures.
+              Instantly identify missing keys between Development, Staging, and Production. Sync drifted secrets with 1-click and eliminate &quot;works on my machine&quot; deployment failures.
             </p>
           </div>
 
