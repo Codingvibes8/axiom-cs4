@@ -15,8 +15,11 @@ import {
   Check, 
   Cpu, 
   Flame, 
-  X
+  X,
+  Sparkles,
+  Clock
 } from 'lucide-react';
+import { AgentTTLBadge } from './AgentTTLBadge';
 
 export const AgentHarnessTab: React.FC = () => {
   const { 
@@ -27,6 +30,7 @@ export const AgentHarnessTab: React.FC = () => {
     updateAgentStatus, 
     triggerKillSwitch, 
     rotateAgentToken, 
+    extendAgentTTL,
     showToast 
   } = useAxiomStore();
 
@@ -37,12 +41,12 @@ export const AgentHarnessTab: React.FC = () => {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [modelProvider, setModelProvider] = useState<AgentHarness['model_provider']>('Anthropic');
-  const [agentType] = useState<AgentHarness['agent_type']>('Coding Assistant');
+  const [agentType, setAgentType] = useState<AgentHarness['agent_type']>('Coding Assistant');
   const [environment, setEnvironment] = useState<Environment>('development');
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>(['OPENAI_API_KEY']);
   const [ephemeralTtl, setEphemeralTtl] = useState(60);
   const [tokenLimitPerHour, setTokenLimitPerHour] = useState(50000);
-  const [autoMask] = useState(true);
+  const [autoMask, setAutoMask] = useState(true);
 
   // Interactive Live Simulator Terminal State
   const [selectedAgentId, setSelectedAgentId] = useState<string>(agents[0]?.id || '');
@@ -74,7 +78,7 @@ export const AgentHarnessTab: React.FC = () => {
       status: 'active',
       ephemeral_ttl_minutes: Number(ephemeralTtl),
       token_limit_per_hour: Number(tokenLimitPerHour),
-      api_key_alias: secureToken(`axm_${modelProvider.toLowerCase().replace(/\s+/g, '')}_`, 4),
+      api_key_alias: `axm_${modelProvider.toLowerCase().replace(/\s+/g, '')}_${secureToken('', 4).slice(0, 6)}`,
       token_prefix: `axm_${environment.substring(0, 3)}_`,
       auto_mask_secrets: autoMask,
     });
@@ -84,7 +88,7 @@ export const AgentHarnessTab: React.FC = () => {
     setIsAddModalOpen(false);
   };
 
-  const runSimulation = () => {
+  const runSimulation = async () => {
     if (!selectedAgent) return;
     setIsSimulating(true);
     setSimOutput([
@@ -92,12 +96,46 @@ export const AgentHarnessTab: React.FC = () => {
       `[SECURITY CHECK] Agent Status: ${selectedAgent.status.toUpperCase()} | Token Quota: ${selectedAgent.tokens_used_today}/${selectedAgent.token_limit_per_hour} tokens`,
     ]);
 
-    setTimeout(() => {
-      if (selectedAgent.status === 'revoked') {
+    try {
+      const res = await fetch(`/api/proxy/${selectedAgent.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: simPrompt })
+      });
+
+      if (res.status === 503) {
+        // Fallback to simulated local execution if Supabase isn't configured
+        setTimeout(() => {
+          if (selectedAgent.status === 'revoked') {
+            setSimOutput((prev) => [
+              ...prev,
+              `[🚨 BLOCKED] Firewall Rejection: Agent credentials have been REVOKED via Emergency Killswitch.`,
+              `[RESULT] 403 Forbidden: Contact SecOps to reissue token.`,
+            ]);
+            setIsSimulating(false);
+            return;
+          }
+
+          setSimOutput((prev) => [
+            ...prev,
+            `[SCOPED VAULT] Requesting ephemeral envelope for secrets: [${selectedAgent.allowed_secrets.join(', ')}]`,
+            `[MASKING ENGINE] Ephemeral TTL Lease: ${selectedAgent.ephemeral_ttl_minutes} minutes`,
+            `[INSPECTION] Prompt: "${simPrompt}"`,
+            `[PROXY SANITIZATION] Masking raw keys: "postgresql://postgres.axiom_prod:••••••••@db..." injected safely.`,
+            `[EXECUTION] AI Agent call succeeded via zero-trust sandbox tunnel.`,
+            `[METRICS] Recorded 420 tokens against hourly budget (${selectedAgent.token_limit_per_hour - 420} remaining).`,
+          ]);
+          setIsSimulating(false);
+        }, 1200);
+        return;
+      }
+
+      const data = await res.json();
+      
+      if (!res.ok) {
         setSimOutput((prev) => [
           ...prev,
-          `[🚨 BLOCKED] Firewall Rejection: Agent credentials have been REVOKED via Emergency Killswitch.`,
-          `[RESULT] 403 Forbidden: Contact SecOps to reissue token.`,
+          `[🚨 BLOCKED] Proxy Error ${res.status}: ${data.reason || data.error}`,
         ]);
         setIsSimulating(false);
         return;
@@ -106,14 +144,18 @@ export const AgentHarnessTab: React.FC = () => {
       setSimOutput((prev) => [
         ...prev,
         `[SCOPED VAULT] Requesting ephemeral envelope for secrets: [${selectedAgent.allowed_secrets.join(', ')}]`,
-        `[MASKING ENGINE] Ephemeral TTL Lease: ${selectedAgent.ephemeral_ttl_minutes} minutes`,
+        `[MASKING ENGINE] Injecting ${data.masked_keys_count} secrets...`,
         `[INSPECTION] Prompt: "${simPrompt}"`,
-        `[PROXY SANITIZATION] Masking raw keys: "postgresql://postgres.axiom_prod:••••••••@db..." injected safely.`,
+        `[PROXY SANITIZATION] Safe payload passed to ${data.proxy_result.model}.`,
         `[EXECUTION] AI Agent call succeeded via zero-trust sandbox tunnel.`,
-        `[METRICS] Recorded 420 tokens against hourly budget (${selectedAgent.token_limit_per_hour - 420} remaining).`,
+        `[METRICS] Recorded ${data.tokens_used} tokens against hourly budget.`,
       ]);
       setIsSimulating(false);
-    }, 1200);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSimOutput((prev) => [...prev, `[ERROR] Connection failed: ${message}`]);
+      setIsSimulating(false);
+    }
   };
 
   const availableSecretKeys = Array.from(new Set(secrets.map((s) => s.key)));
@@ -208,9 +250,12 @@ export const AgentHarnessTab: React.FC = () => {
                   <span className="text-zinc-200 font-mono">{agent.token_limit_per_hour.toLocaleString()} tok/hr</span>
                 </div>
 
-                <div className="flex items-center justify-between text-zinc-400">
-                  <span>Ephemeral TTL:</span>
-                  <span className="text-zinc-200 font-mono">{agent.ephemeral_ttl_minutes} mins</span>
+                <div className="flex flex-col gap-1 text-zinc-400">
+                  <div className="flex items-center justify-between">
+                    <span>Ephemeral TTL:</span>
+                    <span className="text-zinc-200 font-mono">{agent.ephemeral_ttl_minutes} mins</span>
+                  </div>
+                  <AgentTTLBadge agent={agent} />
                 </div>
 
                 <div className="pt-1.5 border-t border-zinc-800">
@@ -247,20 +292,30 @@ export const AgentHarnessTab: React.FC = () => {
               {/* Action Buttons */}
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <button
+                  onClick={() => extendAgentTTL(agent.id, 30)}
+                  className="py-1.5 px-2 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700 flex items-center justify-center gap-1.5 transition-colors"
+                  disabled={isRevoked}
+                >
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>+30m TTL</span>
+                </button>
+
+                <button
                   onClick={() => rotateAgentToken(agent.id)}
                   className="py-1.5 px-2 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700 flex items-center justify-center gap-1.5 transition-colors"
                 >
                   <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Rotate</span>
                 </button>
-
+              </div>
+              <div className="grid grid-cols-1 gap-2">
                 {isRevoked ? (
                   <button
                     onClick={() => updateAgentStatus(agent.id, 'active')}
                     className="py-1.5 px-2 text-xs font-semibold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 rounded-lg border border-emerald-500/30 flex items-center justify-center gap-1.5 transition-colors"
                   >
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Unblock</span>
+                    <span>Unblock & Re-enable</span>
                   </button>
                 ) : (
                   <button
@@ -415,7 +470,9 @@ export const AgentHarnessTab: React.FC = () => {
                   </label>
                   <select
                     value={modelProvider}
-                    onChange={(e) => setModelProvider(e.target.value as AgentHarness['model_provider'])}
+                    onChange={(e) =>
+                      setModelProvider(e.target.value as AgentHarness['model_provider'])
+                    }
                     className="glass-input w-full px-3 py-2 rounded-lg text-sm bg-zinc-950 border-zinc-800"
                   >
                     <option value="Anthropic">Anthropic (Claude)</option>

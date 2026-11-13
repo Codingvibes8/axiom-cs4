@@ -60,6 +60,7 @@ interface AxiomStoreContextType {
   updateAgentStatus: (id: string, status: AgentHarness['status']) => void;
   triggerKillSwitch: (id: string) => void;
   rotateAgentToken: (id: string) => void;
+  extendAgentTTL: (id: string, minutes: number) => void;
   
   // Settings
   settings: ProjectSettings;
@@ -177,6 +178,32 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       console.warn('Failed to save Axiom preferences:', e);
     }
   }, [currentEnv]);
+
+  // Periodic TTL Checker
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = new Date().getTime();
+      let hasExpired = false;
+      
+      setAgents((prev) => {
+        const nextAgents = prev.map((a) => {
+          if (a.status !== 'revoked' && a.expires_at) {
+            const expires = new Date(a.expires_at).getTime();
+            if (now >= expires) {
+              hasExpired = true;
+              return { ...a, status: 'revoked' as const };
+            }
+          }
+          return a;
+        });
+        
+        return hasExpired ? nextAgents : prev;
+      });
+
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -436,6 +463,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ...agentData,
       id: randomId('agent'),
       created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + agentData.ephemeral_ttl_minutes * 60 * 1000).toISOString(),
       tokens_used_today: 0,
       last_invoked: 'Never',
     };
@@ -472,6 +500,20 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       logAction('KEY_ROTATION', target.name, target.environment, `Rotated token to alias ${newAlias}`);
       showToast(`Agent token rotated`);
     }
+  };
+
+  const extendAgentTTL = (id: string, minutes: number) => {
+    setAgents((prev) =>
+      prev.map((a) => {
+        if (a.id === id) {
+          const baseTime = a.expires_at ? new Date(a.expires_at).getTime() : Date.now();
+          const newExpires = new Date(baseTime + minutes * 60 * 1000).toISOString();
+          return { ...a, expires_at: newExpires, status: a.status === 'revoked' ? 'active' : a.status };
+        }
+        return a;
+      })
+    );
+    showToast(`Extended agent TTL by ${minutes} minutes`);
   };
 
   const updateSettings = (newSettings: Partial<ProjectSettings>) => {
@@ -535,6 +577,7 @@ export const AxiomProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateAgentStatus,
         triggerKillSwitch,
         rotateAgentToken,
+        extendAgentTTL,
         settings,
         updateSettings,
         resetToDefaults,

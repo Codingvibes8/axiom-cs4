@@ -1,12 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
 import { useAxiomStore } from '@/lib/store';
+import { CommandPalette } from './CommandPalette';
 import { Environment } from '@/lib/types';
-import { mapSupabaseUser } from '@/lib/auth-user';
-import { createClient } from '@/lib/supabase/client';
-import { isSupabaseConfigured } from '@/lib/supabase/config';
+import { isSupabaseConfigured, listFactors } from '@/lib/supabase';
 import { SecretsTab } from './SecretsTab';
 import { DiffTab } from './DiffTab';
 import { AgentHarnessTab } from './AgentHarnessTab';
@@ -24,19 +22,20 @@ import {
   LogOut, 
   CheckCircle2, 
   Menu,
-  X
+  X,
+  Sparkles,
+  Search,
+  ShieldCheck
 } from 'lucide-react';
 
 interface DashboardShellProps {
-  onLogout?: () => void;
+  onLogout: () => void;
 }
 
-export const DashboardShell: React.FC<DashboardShellProps> = () => {
-  const router = useRouter();
+export const DashboardShell: React.FC<DashboardShellProps> = ({ onLogout }) => {
   const { 
     currentUser, 
-    setCurrentUser,
-    clearSession,
+    setCurrentUser, 
     currentProject, 
     currentEnv, 
     setCurrentEnv, 
@@ -48,42 +47,46 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
   } = useAxiomStore();
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // Hydrate the client store with the server-verified Supabase identity.
-  // Authorization still happens server-side and (later) in RLS.
+  // Sync the 2FA status into the user record on load (survives refresh in the session)
   useEffect(() => {
     if (!isSupabaseConfigured) return;
-
-    const supabase = createClient();
-    if (!supabase) return;
-
-    let active = true;
-    supabase.auth
-      .getUser()
+    listFactors()
       .then(({ data }) => {
-        if (active && data.user) setCurrentUser(mapSupabaseUser(data.user));
+        const hasTotp = data?.all.some(
+          (f) => f.factor_type === 'totp' && f.status === 'verified'
+        );
+        if (Boolean(hasTotp) !== Boolean(currentUser.twoFactorEnabled)) {
+          setCurrentUser({ ...currentUser, twoFactorEnabled: Boolean(hasTotp) });
+        }
       })
-      .catch(() => {
-        // The route guard will handle a missing/invalid session.
-      });
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-    return () => {
-      active = false;
+  // Global Cmd+K / Ctrl+K keyboard shortcut
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
     };
-  }, [setCurrentUser]);
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => document.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
-  const handleLogout = async () => {
-    try {
-      const supabase = createClient();
-      if (supabase) await supabase.auth.signOut();
-    } catch (error) {
-      console.warn('Failed to revoke Supabase session:', error);
-    } finally {
-      clearSession();
-      router.replace('/login');
-      router.refresh();
-    }
-  };
+  // Auto-close drawer on large screens
+  React.useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768 && isMobileMenuOpen) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isMobileMenuOpen]);
 
   const envs: { id: Environment; label: string; color: string }[] = [
     { id: 'development', label: 'Dev', color: 'text-teal-400 border-teal-500/30 bg-teal-500/10' },
@@ -116,15 +119,25 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
         <button
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
           className="p-2 text-zinc-400 hover:text-white"
+          aria-label="Toggle Navigation"
+          aria-expanded={isMobileMenuOpen}
         >
           {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
       </div>
 
+      {/* Mobile Drawer Backdrop */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm md:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
       {/* Sidebar Navigation */}
       <aside
-        className={`fixed md:sticky top-0 left-0 h-screen w-64 glass-panel border-r border-zinc-800/80 z-40 flex flex-col justify-between p-5 transition-transform duration-300 md:translate-x-0 ${
-          isMobileMenuOpen ? 'translate-x-0 bg-zinc-900' : '-translate-x-full md:translate-x-0'
+        className={`fixed top-0 left-0 h-full w-72 md:w-64 glass-panel border-r border-zinc-800/80 z-40 flex flex-col justify-between p-5 transition-transform duration-300 ease-in-out md:static md:translate-x-0 ${
+          isMobileMenuOpen ? 'translate-x-0 bg-zinc-900 shadow-2xl' : '-translate-x-full'
         }`}
       >
         <div className="space-y-6">
@@ -206,14 +219,25 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-white truncate">{currentUser.name}</div>
-                <div className="text-[10px] text-zinc-400 capitalize">{currentUser.role}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-zinc-400 capitalize">{currentUser.role}</span>
+                  {currentUser.twoFactorEnabled && (
+                    <span
+                      className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                      title="Two-factor authentication enabled"
+                    >
+                      <ShieldCheck className="w-2.5 h-2.5" />
+                      2FA
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
             <button
-              onClick={handleLogout}
+              onClick={onLogout}
               className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
-              title="Sign out"
+              title="Sign Out to Landing"
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -222,7 +246,7 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
       </aside>
 
       {/* Main Content Dashboard Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-zinc-950">
+      <main className="flex-1 flex flex-col min-w-0 bg-zinc-950 md:pl-0">
         {/* Top Header */}
         <header className="sticky top-0 z-30 glass-panel border-b border-zinc-800 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -233,6 +257,24 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
               </span>
             </h1>
           </div>
+
+          {/* Cmd+K search trigger */}
+          <button
+            data-testid="cmd-k-trigger"
+            onClick={() => setIsSearchOpen(true)}
+            className="hidden md:flex items-center gap-2 px-3 py-2 rounded-xl
+                       bg-zinc-900/80 border border-zinc-700/60 text-zinc-400
+                       hover:border-zinc-600 hover:text-zinc-200 transition-all
+                       text-xs group"
+            aria-label="Open search (Ctrl+K)"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span className="text-zinc-500 group-hover:text-zinc-300">Search secrets…</span>
+            <kbd className="ml-1 flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px]
+                            font-mono text-zinc-600 bg-zinc-800 border border-zinc-700">
+              ⌘K
+            </kbd>
+          </button>
 
           {/* Environment Switcher */}
           <div className="flex items-center gap-2 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
@@ -265,6 +307,13 @@ export const DashboardShell: React.FC<DashboardShellProps> = () => {
           {activeTab === 'settings' && <SettingsTab />}
         </div>
       </main>
+
+      {/* Cmd+K Command Palette */}
+      <CommandPalette
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        onNavigate={(tab) => setActiveTab(tab as 'secrets' | 'diff' | 'team' | 'activity' | 'agents' | 'settings')}
+      />
 
       {/* Floating Global Toast Notification */}
       {toastMessage && (

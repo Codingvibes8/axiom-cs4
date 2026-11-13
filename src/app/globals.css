@@ -1,0 +1,43 @@
+/* src/app/globals.css */
+@layer base {
+  :root {
+    /* Existing tokens (if any) */
+    --primary: 210 50% 50%; /* hsl hue, sat, light */
+    --surface-zinc: 210 30% 20%;
+    --border-glass: 210 20% 25%;
+    /* New mesh gradient colors */
+    --mesh-primary: 260 80% 60%;
+    --mesh-secondary: 180 70% 55%;
+    --mesh-accent: 340 65% 60%;
+  }
+}
+
+@keyframes meshGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.animated-bg {
+  background: linear-gradient(-45deg, hsl(var(--mesh-primary)), hsl(var(--mesh-secondary)), hsl(var(--mesh-accent)));
+  background-size: 400% 400%;
+  animation: meshGradient 20s ease infinite;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Optional SVG noise overlay */
+.animated-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAwIiBoZWlnaHQ9IjQwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48ZmlsdGVyIGlkPSJuZXNzIj48ZmV...');
+  opacity: 0.08;
+  pointer-events: none;
+}

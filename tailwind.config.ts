@@ -13,6 +13,12 @@ const config: Config = {
       colors: {
         background: 'var(--background)',
         foreground: 'var(--foreground)',
+        primary: 'hsl(var(--primary) / <alpha-value>)',
+        surfaceZinc: 'hsl(var(--surface-zinc) / <alpha-value>)',
+        borderGlass: 'hsl(var(--border-glass) / <alpha-value>)',
+        meshPrimary: 'hsl(var(--mesh-primary) / <alpha-value>)',
+        meshSecondary: 'hsl(var(--mesh-secondary) / <alpha-value>)',
+        meshAccent: 'hsl(var(--mesh-accent) / <alpha-value>)',
       },
     },
   },
